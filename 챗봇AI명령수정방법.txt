@@ -1,0 +1,3 @@
+https://breakout-hongdae-navertoktokchatbot.onrender.com/admin
+
+홈페이지 들어가서 관리자계정으로 로그인(스티커메모 - gmail) 메일 아이디, 비밀번호
