@@ -1,0 +1,28 @@
+# 네이버 톡톡 FAQ 챗봇
+
+## 질문·답변 수정 페이지 설정
+
+관리자 편집 페이지는 `https://<Render 서비스 주소>/admin`에서 사용할 수 있습니다. Render 대시보드의 **Environment**에 다음 환경변수를 등록한 뒤 서비스를 재배포하세요.
+
+| Key | Value |
+|---|---|
+| `ADMIN_USER` | 편집 페이지 로그인 이름 |
+| `ADMIN_PASSWORD` | 충분히 길고 추측하기 어려운 편집 페이지 비밀번호 |
+| `GITHUB_TOKEN` | 아래 안내에 따라 만든 GitHub 토큰 |
+| `GITHUB_REPOSITORY` | `breakouthongdae-rgb/breakout_hongdae_navertoktokchatbot` 형식의 저장소 경로 |
+| `GITHUB_BRANCH` | `main` |
+
+`GITHUB_TOKEN`은 GitHub에서 해당 저장소만 접근하도록 **Fine-grained personal access token**을 만들고, **Contents: Read and write** 권한만 부여하세요. 토큰은 코드나 채팅에 붙여 넣지 말고 Render 환경변수에만 저장하세요. 토큰을 공개했거나 실수로 코드에 올렸다면 GitHub에서 폐기하고 새로 발급하세요.
+
+설정을 마치면 `/admin`에 접속해 로그인하고 텍스트를 수정한 뒤 **저장**을 누릅니다. 저장할 때마다 GitHub에 `talk.txt` 커밋이 생성되며, Render 자동 배포가 완료된 후 새 답변이 적용됩니다.
+
+## 답변 형식
+
+한 줄에 질문과 답변을 하나씩 작성합니다. 첫 번째 `:`가 질문과 답변을 나눕니다.
+
+```text
+영업시간이 언제인가요? : 평일 오전 9시부터 오후 6시까지 운영합니다.
+예약은 어떻게 하나요? : 원하시는 날짜와 시간을 알려주세요.
+```
+
+빈 줄과 `#`으로 시작하는 줄은 무시됩니다.

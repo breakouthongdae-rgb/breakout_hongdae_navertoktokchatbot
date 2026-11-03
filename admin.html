@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>톡톡 답변 편집</title>
+    <style>
+        body { max-width: 760px; margin: 40px auto; padding: 0 16px; font-family: sans-serif; color: #222; }
+        h1 { font-size: 1.5rem; }
+        p { line-height: 1.6; }
+        textarea { box-sizing: border-box; width: 100%; min-height: 360px; padding: 12px; font: 15px/1.6 monospace; }
+        button { margin-top: 12px; padding: 10px 18px; font-size: 1rem; cursor: pointer; }
+        #status { min-height: 1.5em; }
+    </style>
+</head>
+<body>
+    <h1>톡톡 질문·답변 편집</h1>
+    <p>한 줄에 <code>질문 : 답변</code> 형식으로 입력하세요. 저장하면 GitHub에 반영되고 Render가 자동 배포합니다.</p>
+    <textarea id="content" aria-label="질문과 답변 내용" spellcheck="false"></textarea>
+    <br>
+    <button id="save" type="button">저장</button>
+    <p id="status" role="status"></p>
+    <script>
+        const content = document.querySelector('#content');
+        const status = document.querySelector('#status');
+        const saveButton = document.querySelector('#save');
+
+        async function loadContent() {
+            status.textContent = '불러오는 중...';
+            try {
+                const response = await fetch('/admin/api/talk');
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || '파일을 불러오지 못했습니다.');
+                content.value = result.content;
+                status.textContent = '내용을 수정한 뒤 저장하세요.';
+            } catch (error) {
+                status.textContent = error.message;
+            }
+        }
+
+        saveButton.addEventListener('click', async () => {
+            saveButton.disabled = true;
+            status.textContent = '저장 중...';
+            try {
+                const response = await fetch('/admin/api/talk', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: content.value })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || '저장하지 못했습니다.');
+                status.textContent = result.message;
+            } catch (error) {
+                status.textContent = error.message;
+            } finally {
+                saveButton.disabled = false;
+            }
+        });
+
+        loadContent();
+    </script>
+</body>
+</html>
