@@ -264,12 +264,13 @@ function findAnswer(message, entries) {
         return exactMatch.answer;
     }
 
-    const partialMatch = [...entries]
-        .sort((first, second) => second.question.length - first.question.length)
-        .find((entry) => normalizedMessage.includes(entry.question));
-
-    if (partialMatch) {
-        return partialMatch.answer;
+    const partialMatches = [...entries]
+        .filter((entry) => normalizedMessage.includes(entry.question))
+        .sort((first, second) => second.question.length - first.question.length);
+    if (partialMatches.length > 0 &&
+        (partialMatches.length === 1 ||
+            partialMatches[0].question.length > partialMatches[1].question.length)) {
+        return partialMatches[0].answer;
     }
 
     const ignoredWords = new Set([
@@ -308,18 +309,29 @@ function findAnswer(message, entries) {
         return FALLBACK_ANSWER;
     }
 
+    const compactMessage = normalizedMessage.replace(/[^\p{L}\p{N}]/gu, '');
     const candidates = entries.map((entry) => {
         const questionKeywords = getKeywords(entry.question);
-        let overlap = 0;
+        const answerKeywords = getKeywords(entry.answer);
+        let questionOverlap = 0;
+        let answerOverlap = 0;
         for (const keyword of messageKeywords) {
             if (questionKeywords.has(keyword)) {
-                overlap += 1;
+                questionOverlap += 1;
+            }
+            if (answerKeywords.has(keyword)) {
+                answerOverlap += 1;
             }
         }
 
-        const score = questionKeywords.size === 0
+        const questionScore = questionKeywords.size === 0
             ? 0
-            : (2 * overlap) / (messageKeywords.size + questionKeywords.size);
+            : (2 * questionOverlap) / (messageKeywords.size + questionKeywords.size);
+        const answerCoverage = answerOverlap / messageKeywords.size;
+        const compactAnswer = normalizeText(entry.answer).replace(/[^\p{L}\p{N}]/gu, '');
+        const answerPhraseMatch = compactMessage.length >= 3 && compactAnswer.includes(compactMessage);
+        const answerScore = Math.max(answerCoverage * 0.85, answerPhraseMatch ? 0.9 : 0);
+        const score = Math.max(questionScore, answerScore);
         return { entry, score };
     }).sort((first, second) => second.score - first.score);
 
