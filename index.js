@@ -246,7 +246,66 @@ function findAnswer(message, entries) {
         .sort((first, second) => second.question.length - first.question.length)
         .find((entry) => normalizedMessage.includes(entry.question));
 
-    return partialMatch ? partialMatch.answer : FALLBACK_ANSWER;
+    if (partialMatch) {
+        return partialMatch.answer;
+    }
+
+    const ignoredWords = new Set([
+        '어떻게', '어떤', '무엇', '뭐', '하나요', '하나', '할까요', '인가요',
+        '인가', '방법', '알려주세요', '궁금해요', '해주세요', '해줘', '부탁해요',
+        '가능한가요', '가능해요', '있나요', '없나요', '되나요'
+    ]);
+    const endings = [
+        '하려면', '하려고', '에서는', '에게', '한테', '으로', '부터', '까지',
+        '하는', '하기', '에서', '은요', '인가요', '할까요', '해주세요',
+        '은', '는', '이', '가', '을', '를', '에', '로', '와', '과', '도',
+        '만', '의', '방법'
+    ];
+
+    function getKeywords(text) {
+        const words = text.toLocaleLowerCase('ko-KR').match(/[\p{L}\p{N}]+/gu) || [];
+        return new Set(words.map((word) => {
+            let keyword = word;
+            let changed = true;
+            while (changed) {
+                changed = false;
+                for (const ending of endings) {
+                    if (keyword.length - ending.length >= 2 && keyword.endsWith(ending)) {
+                        keyword = keyword.slice(0, -ending.length);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            return keyword;
+        }).filter((word) => word.length >= 2 && !ignoredWords.has(word)));
+    }
+
+    const messageKeywords = getKeywords(message);
+    if (messageKeywords.size === 0) {
+        return FALLBACK_ANSWER;
+    }
+
+    const candidates = entries.map((entry) => {
+        const questionKeywords = getKeywords(entry.question);
+        let overlap = 0;
+        for (const keyword of messageKeywords) {
+            if (questionKeywords.has(keyword)) {
+                overlap += 1;
+            }
+        }
+
+        const score = questionKeywords.size === 0
+            ? 0
+            : (2 * overlap) / (messageKeywords.size + questionKeywords.size);
+        return { entry, score };
+    }).sort((first, second) => second.score - first.score);
+
+    const bestMatch = candidates[0];
+    const hasTie = candidates[1] && candidates[1].score === bestMatch.score;
+    return bestMatch.score >= 0.8 && !hasTie
+        ? bestMatch.entry.answer
+        : FALLBACK_ANSWER;
 }
 
 app.post('/webhook', (req, res) => {
