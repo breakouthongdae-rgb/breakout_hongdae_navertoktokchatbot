@@ -41,7 +41,7 @@ function parseFaq(contents) {
         }
 
         questions.add(normalizedQuestion);
-        entries.push({ question: normalizedQuestion, answer });
+        entries.push({ question: normalizedQuestion, title: currentEntry.question.trim(), answer });
         currentEntry = null;
     }
 
@@ -117,6 +117,40 @@ function loadFaq() {
     return entries;
 }
 
+function updateFaqExamples(contents, entries) {
+    const examplesByQuestion = new Map();
+    const headerLines = [];
+    let foundEntry = false;
+
+    contents.split(/\r?\n/).forEach((line, index) => {
+        const trimmedLine = line.trim();
+        if (!trimmedLine || trimmedLine.startsWith('#')) {
+            if (!foundEntry) {
+                headerLines.push(line);
+            }
+            return;
+        }
+
+        const separatorIndex = line.indexOf(':');
+        if (separatorIndex <= 0) {
+            throw new Error(`faq_examples.txt ${index + 1}행에 대표 질문과 예시 문장 사이의 ':'가 없습니다.`);
+        }
+
+        const question = normalizeText(line.slice(0, separatorIndex));
+        if (examplesByQuestion.has(question)) {
+            throw new Error(`faq_examples.txt ${index + 1}행의 대표 질문이 중복되었습니다: ${question}`);
+        }
+
+        foundEntry = true;
+        examplesByQuestion.set(question, line.slice(separatorIndex + 1).trim());
+    });
+
+    const updatedEntries = entries.map((entry) =>
+        `${entry.title} : ${examplesByQuestion.get(entry.question) || ''}`);
+    const header = headerLines.join('\n').trimEnd();
+    return `${header ? `${header}\n\n` : ''}${updatedEntries.join('\n')}\n`;
+}
+
 function getAdminConfig() {
     const repository = process.env.GITHUB_REPOSITORY || '';
     const [owner, name, ...extra] = repository.split('/');
@@ -187,9 +221,9 @@ function requireSameOrigin(req, res, next) {
     return next();
 }
 
-async function githubRequest(config, method, body) {
+async function githubRequest(config, method, fileName, body) {
     const ref = method === 'GET' ? `?ref=${encodeURIComponent(config.branch)}` : '';
-    const apiUrl = `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repository)}/contents/talk.txt${ref}`;
+    const apiUrl = `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repository)}/contents/${encodeURIComponent(fileName)}${ref}`;
     const response = await fetch(apiUrl, {
         method,
         headers: {
@@ -228,7 +262,7 @@ app.get('/admin', requireAdmin, (req, res) => {
 app.get('/admin/api/talk', requireAdmin, async (req, res) => {
     try {
         const config = getAdminConfig();
-        const file = await githubRequest(config, 'GET');
+        const file = await githubRequest(config, 'GET', 'talk.txt');
         if (!file.content || !file.sha) {
             throw new Error('GitHub에서 talk.txt 파일 내용을 확인할 수 없습니다.');
         }
@@ -247,23 +281,49 @@ app.put('/admin/api/talk', requireAdmin, requireSameOrigin, async (req, res) => 
         return res.status(413).json({ error: '텍스트가 너무 깁니다. 64KB 이하로 줄여 주세요.' });
     }
 
+    let faqEntries;
     try {
-        parseFaq(req.body.content);
+        faqEntries = parseFaq(req.body.content);
     } catch (error) {
         return res.status(400).json({ error: error.message });
     }
 
+    let talkSaved = false;
     try {
         const config = getAdminConfig();
-        const file = await githubRequest(config, 'GET');
-        const updatedFile = await githubRequest(config, 'PUT', {
+        const [talkFile, examplesFile] = await Promise.all([
+            githubRequest(config, 'GET', 'talk.txt'),
+            githubRequest(config, 'GET', 'faq_examples.txt')
+        ]);
+        if (!talkFile.content || !talkFile.sha || !examplesFile.content || !examplesFile.sha) {
+            throw new Error('GitHub에서 FAQ 파일 내용을 확인할 수 없습니다.');
+        }
+
+        const examplesContent = updateFaqExamples(
+            Buffer.from(examplesFile.content, 'base64').toString('utf8'),
+            faqEntries
+        );
+        if (Buffer.byteLength(examplesContent, 'utf8') > 64000) {
+            return res.status(413).json({ error: '질문 예시 파일이 너무 깁니다. 64KB 이하로 줄여 주세요.' });
+        }
+
+        const updatedFile = await githubRequest(config, 'PUT', 'talk.txt', {
             message: 'Update FAQ via admin editor',
             content: Buffer.from(req.body.content, 'utf8').toString('base64'),
-            sha: file.sha,
+            sha: talkFile.sha,
             branch: config.branch
         });
+        talkSaved = true;
+
+        await githubRequest(config, 'PUT', 'faq_examples.txt', {
+            message: 'Sync FAQ examples with questions',
+            content: Buffer.from(examplesContent, 'utf8').toString('base64'),
+            sha: examplesFile.sha,
+            branch: config.branch
+        });
+
         return res.json({
-            message: '저장했습니다. GitHub 커밋 후 Render가 자동 배포합니다.',
+            message: '질문·답변과 질문 예시를 GitHub에 저장했습니다. Render가 자동 배포합니다.',
             commit: updatedFile.commit && updatedFile.commit.html_url
         });
     } catch (error) {
@@ -271,8 +331,12 @@ app.put('/admin/api/talk', requireAdmin, requireSameOrigin, async (req, res) => 
         const status = error.status === 409 ? 409 : 502;
         return res.status(status).json({
             error: status === 409
-                ? '파일이 다른 곳에서 변경되었습니다. 새로고침한 뒤 다시 저장해 주세요.'
-                : 'GitHub에 저장하지 못했습니다. 저장소와 토큰 권한을 확인해 주세요.'
+                ? (talkSaved
+                    ? '질문·답변은 저장됐지만 질문 예시 파일이 다른 곳에서 변경되었습니다. 새로고침한 뒤 다시 저장해 주세요.'
+                    : '파일이 다른 곳에서 변경되었습니다. 새로고침한 뒤 다시 저장해 주세요.')
+                : (talkSaved
+                    ? '질문·답변은 저장됐지만 질문 예시 파일을 저장하지 못했습니다. 다시 저장해 동기화를 완료해 주세요.'
+                    : 'GitHub에 저장하지 못했습니다. 저장소와 토큰 권한을 확인해 주세요.')
         });
     }
 });
