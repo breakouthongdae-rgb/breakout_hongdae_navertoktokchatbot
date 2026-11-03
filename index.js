@@ -6,11 +6,16 @@ const app = express();
 app.use(express.json());
 
 const FAQ_FILE = path.join(__dirname, 'talk.txt');
+const FAQ_EXAMPLES_FILE = path.join(__dirname, 'faq_examples.txt');
 const ADMIN_FILE = path.join(__dirname, 'admin.html');
 const FALLBACK_ANSWER = '죄송해요. 등록된 답변에서 내용을 찾지 못했어요. 상담원에게 문의해 주세요.';
 
 function normalizeText(text) {
     return text.toLocaleLowerCase('ko-KR').replace(/\s+/g, ' ').trim();
+}
+
+function compactText(text) {
+    return normalizeText(text).replace(/[^\p{L}\p{N}]/gu, '');
 }
 
 function parseFaq(contents) {
@@ -73,7 +78,43 @@ function parseFaq(contents) {
 }
 
 function loadFaq() {
-    return parseFaq(fs.readFileSync(FAQ_FILE, 'utf8'));
+    const entries = parseFaq(fs.readFileSync(FAQ_FILE, 'utf8'));
+    const entriesByQuestion = new Map(entries.map((entry) => [entry.question, entry]));
+    const examplesByText = new Map();
+    const examples = fs.readFileSync(FAQ_EXAMPLES_FILE, 'utf8');
+
+    examples.split(/\r?\n/).forEach((line, index) => {
+        const trimmedLine = line.trim();
+        if (!trimmedLine || trimmedLine.startsWith('#')) {
+            return;
+        }
+
+        const separatorIndex = line.indexOf(':');
+        if (separatorIndex <= 0) {
+            throw new Error(`faq_examples.txt ${index + 1}행에 대표 질문과 예시 문장 사이의 ':'가 없습니다.`);
+        }
+
+        const question = normalizeText(line.slice(0, separatorIndex));
+        const entry = entriesByQuestion.get(question);
+        if (!entry) {
+            console.warn(`faq_examples.txt ${index + 1}행의 대표 질문을 talk.txt에서 찾을 수 없습니다: ${question}`);
+            return;
+        }
+
+        entry.examples = entry.examples || [];
+        for (const example of line.slice(separatorIndex + 1).split('|').map(normalizeText).filter(Boolean)) {
+            const compactExample = compactText(example);
+            const existing = examplesByText.get(compactExample);
+            if (existing && existing !== entry) {
+                throw new Error(`faq_examples.txt ${index + 1}행의 예시 문장이 다른 질문과 중복됩니다: ${example}`);
+            }
+
+            examplesByText.set(compactExample, entry);
+            entry.examples.push(example);
+        }
+    });
+
+    return entries;
 }
 
 function getAdminConfig() {
@@ -259,18 +300,34 @@ function extractMessage(payload, depth = 0) {
 
 function findAnswer(message, entries) {
     const normalizedMessage = normalizeText(message);
+    const compactMessage = compactText(message);
     const exactMatch = entries.find((entry) => entry.question === normalizedMessage);
     if (exactMatch) {
         return exactMatch.answer;
     }
 
-    const partialMatches = [...entries]
-        .filter((entry) => normalizedMessage.includes(entry.question))
-        .sort((first, second) => second.question.length - first.question.length);
+    const exactExampleMatches = entries.filter((entry) =>
+        (entry.examples || []).some((example) => compactText(example) === compactMessage));
+    if (exactExampleMatches.length === 1) {
+        return exactExampleMatches[0].answer;
+    }
+
+    const partialMatches = entries.map((entry) => {
+        const phrase = [entry.question, ...(entry.examples || [])]
+            .filter((candidate) => {
+                const compactCandidate = compactText(candidate);
+                return compactCandidate.length >= 4 &&
+                    (compactMessage.includes(compactCandidate) ||
+                        (compactMessage.length >= 4 && compactCandidate.includes(compactMessage)));
+            })
+            .sort((first, second) => compactText(second).length - compactText(first).length)[0];
+        return phrase ? { entry, phrase } : null;
+    }).filter(Boolean)
+        .sort((first, second) => compactText(second.phrase).length - compactText(first.phrase).length);
     if (partialMatches.length > 0 &&
         (partialMatches.length === 1 ||
-            partialMatches[0].question.length > partialMatches[1].question.length)) {
-        return partialMatches[0].answer;
+            compactText(partialMatches[0].phrase).length > compactText(partialMatches[1].phrase).length)) {
+        return partialMatches[0].entry.answer;
     }
 
     const ignoredWords = new Set([
@@ -309,26 +366,30 @@ function findAnswer(message, entries) {
         return FALLBACK_ANSWER;
     }
 
-    const compactMessage = normalizedMessage.replace(/[^\p{L}\p{N}]/gu, '');
     const candidates = entries.map((entry) => {
-        const questionKeywords = getKeywords(entry.question);
+        const questionPhrases = [entry.question, ...(entry.examples || [])];
         const answerKeywords = getKeywords(entry.answer);
-        let questionOverlap = 0;
         let answerOverlap = 0;
         for (const keyword of messageKeywords) {
-            if (questionKeywords.has(keyword)) {
-                questionOverlap += 1;
-            }
             if (answerKeywords.has(keyword)) {
                 answerOverlap += 1;
             }
         }
 
-        const questionScore = questionKeywords.size === 0
-            ? 0
-            : (2 * questionOverlap) / (messageKeywords.size + questionKeywords.size);
+        const questionScore = Math.max(...questionPhrases.map((phrase) => {
+            const questionKeywords = getKeywords(phrase);
+            let overlap = 0;
+            for (const keyword of messageKeywords) {
+                if (questionKeywords.has(keyword)) {
+                    overlap += 1;
+                }
+            }
+            return questionKeywords.size === 0
+                ? 0
+                : (2 * overlap) / (messageKeywords.size + questionKeywords.size);
+        }));
         const answerCoverage = answerOverlap / messageKeywords.size;
-        const compactAnswer = normalizeText(entry.answer).replace(/[^\p{L}\p{N}]/gu, '');
+        const compactAnswer = compactText(entry.answer);
         const answerPhraseMatch = compactMessage.length >= 3 && compactAnswer.includes(compactMessage);
         const answerScore = Math.max(answerCoverage * 0.85, answerPhraseMatch ? 0.9 : 0);
         const score = Math.max(questionScore, answerScore);
