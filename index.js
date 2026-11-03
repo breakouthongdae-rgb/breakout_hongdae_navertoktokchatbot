@@ -16,32 +16,54 @@ function normalizeText(text) {
 function parseFaq(contents) {
     const entries = [];
     const questions = new Set();
+    let currentEntry = null;
 
-    contents.split(/\r?\n/).forEach((line, index) => {
-        const trimmedLine = line.trim();
-        if (!trimmedLine || trimmedLine.startsWith('#')) {
+    function saveCurrentEntry() {
+        if (!currentEntry) {
             return;
         }
 
-        const separatorIndex = trimmedLine.indexOf(':');
-        if (separatorIndex < 1) {
-            throw new Error(`talk.txt ${index + 1}행에 질문과 답변 사이의 ':'가 없습니다.`);
+        const answer = currentEntry.answer.join('\n')
+            .replace(/\\(\\|n)/g, (match, escaped) => escaped === 'n' ? '\n' : '\\')
+            .trim();
+        if (!answer) {
+            throw new Error(`talk.txt ${currentEntry.lineNumber}행의 답변이 비어 있습니다.`);
         }
 
-        const question = trimmedLine.slice(0, separatorIndex).trim();
-        const answer = trimmedLine.slice(separatorIndex + 1).trim();
-        if (!question || !answer) {
-            throw new Error(`talk.txt ${index + 1}행의 질문 또는 답변이 비어 있습니다.`);
-        }
-
-        const normalizedQuestion = normalizeText(question);
+        const normalizedQuestion = normalizeText(currentEntry.question);
         if (questions.has(normalizedQuestion)) {
-            throw new Error(`talk.txt ${index + 1}행의 질문이 중복되었습니다: ${question}`);
+            throw new Error(`talk.txt ${currentEntry.lineNumber}행의 질문이 중복되었습니다: ${currentEntry.question}`);
         }
 
         questions.add(normalizedQuestion);
         entries.push({ question: normalizedQuestion, answer });
+        currentEntry = null;
+    }
+
+    contents.split(/\r?\n/).forEach((line, index) => {
+        const trimmedLine = line.trim();
+        if (trimmedLine.startsWith('#')) {
+            return;
+        }
+
+        const separatorIndex = line.indexOf(':');
+        if (separatorIndex > 0 && line.slice(0, separatorIndex).trim()) {
+            saveCurrentEntry();
+            currentEntry = {
+                question: line.slice(0, separatorIndex).trim(),
+                answer: [line.slice(separatorIndex + 1).trim()],
+                lineNumber: index + 1
+            };
+            return;
+        }
+
+        if (currentEntry) {
+            currentEntry.answer.push(line);
+        } else if (trimmedLine) {
+            throw new Error(`talk.txt ${index + 1}행에 질문과 답변 사이의 ':'가 없습니다.`);
+        }
     });
+    saveCurrentEntry();
 
     if (entries.length === 0) {
         throw new Error('talk.txt에 질문과 답변을 한 개 이상 적어 주세요.');

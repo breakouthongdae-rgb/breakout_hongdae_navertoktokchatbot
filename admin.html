@@ -3,57 +3,258 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>톡톡 답변 편집</title>
+    <meta name="color-scheme" content="light">
+    <title>톡톡 답변 관리</title>
     <style>
-        body { max-width: 760px; margin: 40px auto; padding: 0 16px; font-family: sans-serif; color: #222; }
-        h1 { font-size: 1.5rem; }
-        p { line-height: 1.6; }
-        textarea { box-sizing: border-box; width: 100%; min-height: 360px; padding: 12px; font: 15px/1.6 monospace; }
-        button { margin-top: 12px; padding: 10px 18px; font-size: 1rem; cursor: pointer; }
-        #status { min-height: 1.5em; }
+        :root {
+            font-family: "Pretendard", "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #17211d;
+            background: #f4f7f5;
+            font-synthesis: none;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        button, input, textarea { font: inherit; }
+        .page { width: min(920px, 100% - 32px); margin: 0 auto; padding: 48px 0 64px; }
+        .topline { color: #14804a; font-size: .82rem; font-weight: 750; letter-spacing: .08em; }
+        h1 { margin: 8px 0; font-size: clamp(1.7rem, 5vw, 2.25rem); letter-spacing: -.04em; }
+        .intro { margin: 0; color: #68756e; line-height: 1.7; }
+        .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 28px 0 16px; }
+        .count { margin-right: auto; color: #68756e; font-size: .92rem; }
+        button { border: 0; border-radius: 10px; padding: 11px 16px; font-weight: 700; cursor: pointer; transition: background .15s, transform .15s; }
+        button:hover:not(:disabled) { transform: translateY(-1px); }
+        button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #8bc7a7; outline-offset: 2px; }
+        button:disabled { cursor: wait; opacity: .6; }
+        .add { color: #17653d; background: #e1f3e8; }
+        .save { color: white; background: #13834b; }
+        .save:hover:not(:disabled) { background: #0e6f3e; }
+        .cards { display: grid; gap: 14px; }
+        .card { padding: 20px; border: 1px solid #e3eae5; border-radius: 16px; background: white; box-shadow: 0 4px 16px #183d2810; }
+        .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+        .card-title { color: #758179; font-size: .86rem; font-weight: 750; }
+        .remove { padding: 7px 10px; color: #a3413f; background: #fff0ef; font-size: .84rem; }
+        label { display: block; margin: 12px 0 7px; color: #3c4942; font-size: .88rem; font-weight: 700; }
+        input, textarea { width: 100%; border: 1px solid #dce5df; border-radius: 10px; padding: 12px 13px; color: #17211d; background: #fff; }
+        input::placeholder, textarea::placeholder { color: #a4aea8; }
+        textarea { min-height: 142px; resize: vertical; line-height: 1.7; }
+        .hint { margin: 7px 0 0; color: #87928b; font-size: .8rem; }
+        .status { min-height: 26px; margin: 14px 0 0; color: #536159; line-height: 1.5; }
+        .status[data-state="error"] { color: #b42318; }
+        .status[data-state="success"] { color: #127343; }
+        .bottom { display: flex; justify-content: flex-end; margin-top: 20px; }
+        .format { margin-top: 28px; padding: 16px 18px; border-radius: 12px; color: #536159; background: #eaf0ec; font-size: .87rem; line-height: 1.7; }
+        code { color: #17653d; }
+        @media (max-width: 560px) {
+            .page { padding-top: 32px; }
+            .toolbar { gap: 9px; }
+            .toolbar button { flex: 1; }
+            .card { padding: 16px; }
+            .bottom .save { width: 100%; }
+        }
     </style>
 </head>
 <body>
-    <h1>톡톡 질문·답변 편집</h1>
-    <p>한 줄에 <code>질문 : 답변</code> 형식으로 입력하세요. 저장하면 GitHub에 반영되고 Render가 자동 배포합니다.</p>
-    <textarea id="content" aria-label="질문과 답변 내용" spellcheck="false"></textarea>
-    <br>
-    <button id="save" type="button">저장</button>
-    <p id="status" role="status"></p>
+    <main class="page">
+        <div class="topline">TALKTALK FAQ</div>
+        <h1>질문과 답변 관리</h1>
+        <p class="intro">질문과 답변을 각각 입력하고 저장하세요. 답변은 여러 줄로 작성할 수 있고 문단도 나눌 수 있습니다.</p>
+
+        <div class="toolbar">
+            <span class="count" id="count" aria-live="polite">불러오는 중...</span>
+            <button class="add" id="add-top" type="button">＋ 질문 추가</button>
+        </div>
+        <section class="cards" id="cards" aria-label="질문과 답변 목록"></section>
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+        <div class="bottom">
+            <button class="save" id="save" type="button" disabled>변경사항 저장</button>
+        </div>
+        <aside class="format">
+            저장된 답변은 GitHub에 기록된 뒤 Render 배포가 완료되면 톡톡에 적용됩니다.
+            화면을 닫기 전에 반드시 <strong>변경사항 저장</strong>을 눌러 주세요.
+        </aside>
+    </main>
     <script>
-        const content = document.querySelector('#content');
+        const cards = document.querySelector('#cards');
+        const count = document.querySelector('#count');
         const status = document.querySelector('#status');
         const saveButton = document.querySelector('#save');
+        const addButton = document.querySelector('#add-top');
+        let header = [];
+        let savedContent = '';
+        let loading = true;
 
-        async function loadContent() {
-            status.textContent = '불러오는 중...';
-            try {
-                const response = await fetch('/admin/api/talk');
-                const result = await response.json();
-                if (!response.ok) throw new Error(result.error || '파일을 불러오지 못했습니다.');
-                content.value = result.content;
-                status.textContent = '내용을 수정한 뒤 저장하세요.';
-            } catch (error) {
-                status.textContent = error.message;
+        function parseContent(text) {
+            const entries = [];
+            const headerLines = [];
+            let current = null;
+            let foundEntry = false;
+
+            function finishEntry() {
+                if (!current) return;
+                const answer = current.answer.join('\n').replace(/\\(\\|n)/g, (match, escaped) => escaped === 'n' ? '\n' : '\\').trim();
+                entries.push({ question: current.question, answer });
+                current = null;
+            }
+
+            for (const line of text.split(/\r?\n/)) {
+                const trimmed = line.trim();
+                if (!foundEntry && (!trimmed || trimmed.startsWith('#'))) {
+                    headerLines.push(line);
+                    continue;
+                }
+                if (trimmed.startsWith('#')) continue;
+
+                const separator = line.indexOf(':');
+                if (separator > 0 && line.slice(0, separator).trim()) {
+                    finishEntry();
+                    foundEntry = true;
+                    current = {
+                        question: line.slice(0, separator).trim(),
+                        answer: [line.slice(separator + 1).trim()]
+                    };
+                } else if (current) {
+                    current.answer.push(line);
+                } else if (trimmed) {
+                    throw new Error(`질문과 답변 사이에 ':'가 없는 줄을 확인해 주세요: ${line}`);
+                }
+            }
+            finishEntry();
+            return { entries, header: headerLines.join('\n').trimEnd() };
+        }
+
+        function encodeAnswer(answer) {
+            return answer.replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').trim();
+        }
+
+        function makeCard(entry = {}) {
+            const card = document.createElement('article');
+            card.className = 'card';
+
+            const head = document.createElement('div');
+            head.className = 'card-head';
+            const title = document.createElement('span');
+            title.className = 'card-title';
+            const remove = document.createElement('button');
+            remove.className = 'remove';
+            remove.type = 'button';
+            remove.textContent = '삭제';
+            remove.setAttribute('aria-label', '이 질문과 답변 삭제');
+            head.append(title, remove);
+
+            const questionLabel = document.createElement('label');
+            questionLabel.textContent = '질문';
+            const question = document.createElement('input');
+            question.type = 'text';
+            question.placeholder = '예: 예약은 어떻게 하나요?';
+            question.maxLength = 200;
+            question.value = entry.question || '';
+
+            const answerLabel = document.createElement('label');
+            answerLabel.textContent = '답변';
+            const answer = document.createElement('textarea');
+            answer.placeholder = '답변을 입력하세요. 엔터를 눌러 문단을 나눌 수 있습니다.';
+            answer.maxLength = 4000;
+            answer.value = entry.answer || '';
+
+            const hint = document.createElement('p');
+            hint.className = 'hint';
+            hint.textContent = '줄바꿈과 문단이 답변에 그대로 표시됩니다.';
+            card.append(head, questionLabel, question, answerLabel, answer, hint);
+            remove.addEventListener('click', () => {
+                card.remove();
+                updateState();
+            });
+            question.addEventListener('input', updateState);
+            answer.addEventListener('input', updateState);
+            cards.append(card);
+            updateState();
+            if (!entry.question) question.focus();
+        }
+
+        function collectEntries() {
+            return [...cards.querySelectorAll('.card')].map((card) => ({
+                question: card.querySelector('input').value.trim(),
+                answer: card.querySelector('textarea').value.trim()
+            }));
+        }
+
+        function makeContent() {
+            const entries = collectEntries();
+            const body = entries.map(({ question, answer }) => `${question} : ${encodeAnswer(answer)}`).join('\n\n');
+            return [header, body].filter(Boolean).join('\n\n') + '\n';
+        }
+
+        function updateState() {
+            const cardList = [...cards.querySelectorAll('.card')];
+            cardList.forEach((card, index) => {
+                card.querySelector('.card-title').textContent = `질문 ${index + 1}`;
+            });
+            count.textContent = `${cardList.length}개의 질문·답변`;
+            if (!loading) {
+                saveButton.disabled = makeContent() === savedContent;
             }
         }
 
-        saveButton.addEventListener('click', async () => {
+        function showStatus(message, state = '') {
+            status.textContent = message;
+            status.dataset.state = state;
+        }
+
+        async function loadContent() {
+            showStatus('질문과 답변을 불러오는 중...');
+            try {
+                const response = await fetch('/admin/api/talk');
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || '내용을 불러오지 못했습니다.');
+                const parsed = parseContent(result.content);
+                header = parsed.header ? [parsed.header] : [];
+                cards.replaceChildren();
+                parsed.entries.forEach((entry) => makeCard(entry));
+                savedContent = makeContent();
+                loading = false;
+                updateState();
+                showStatus('불러왔습니다. 필요한 내용을 수정하세요.');
+            } catch (error) {
+                loading = false;
+                addButton.disabled = true;
+                saveButton.disabled = true;
+                showStatus(error.message, 'error');
+            }
+        }
+
+        async function saveContent() {
+            const entries = collectEntries();
+            if (entries.some((entry) => !entry.question || !entry.answer)) {
+                showStatus('질문과 답변을 모두 입력해 주세요.', 'error');
+                return;
+            }
             saveButton.disabled = true;
-            status.textContent = '저장 중...';
+            addButton.disabled = true;
+            showStatus('GitHub에 저장 중...');
             try {
                 const response = await fetch('/admin/api/talk', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: content.value })
+                    body: JSON.stringify({ content: makeContent() })
                 });
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.error || '저장하지 못했습니다.');
-                status.textContent = result.message;
+                savedContent = makeContent();
+                showStatus(`${result.message} 배포가 끝나면 새 답변이 적용됩니다.`, 'success');
             } catch (error) {
-                status.textContent = error.message;
+                showStatus(error.message, 'error');
             } finally {
-                saveButton.disabled = false;
+                addButton.disabled = false;
+                updateState();
+            }
+        }
+
+        addButton.addEventListener('click', () => makeCard());
+        saveButton.addEventListener('click', saveContent);
+        window.addEventListener('beforeunload', (event) => {
+            if (!loading && makeContent() !== savedContent) {
+                event.preventDefault();
+                event.returnValue = '';
             }
         });
 
