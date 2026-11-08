@@ -9,6 +9,16 @@ const FAQ_FILE = path.join(__dirname, 'talk.txt');
 const FAQ_EXAMPLES_FILE = path.join(__dirname, 'faq_examples.txt');
 const ADMIN_FILE = path.join(__dirname, 'admin.html');
 const FALLBACK_ANSWER = '죄송해요. 등록된 답변에서 내용을 찾지 못했어요. 상담원에게 문의해 주세요.';
+const startedAt = Date.now();
+const webhookResults = {
+    answered: 0,
+    fallback: 0,
+    ignored: 0,
+    error: 0
+};
+let webhookRequestCount = 0;
+let lastWebhookTimestamp = 0;
+let lastFaqError = '';
 
 function normalizeText(text) {
     return text.toLocaleLowerCase('ko-KR').replace(/\s+/g, ' ').trim();
@@ -116,6 +126,61 @@ function loadFaq() {
 
     return entries;
 }
+
+function getFaqStatus() {
+    try {
+        const entries = loadFaq().length;
+        lastFaqError = '';
+        return { ready: true, entries };
+    } catch (error) {
+        if (error.message !== lastFaqError) {
+            console.error('FAQ 상태 확인 실패:', error.message);
+            lastFaqError = error.message;
+        }
+        return { ready: false, entries: 0 };
+    }
+}
+
+app.get(['/health', '/healthz'], (req, res) => {
+    const faqStatus = getFaqStatus();
+    return res.status(faqStatus.ready ? 200 : 503).json({
+        status: faqStatus.ready ? 'ok' : 'degraded',
+        faq: faqStatus.ready ? 'ready' : 'unavailable',
+        faqEntries: faqStatus.entries,
+        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000)
+    });
+});
+
+app.get('/metrics', (req, res) => {
+    const faqStatus = getFaqStatus();
+    const metrics = [
+        '# HELP chatbot_up Whether the chatbot process is running.',
+        '# TYPE chatbot_up gauge',
+        'chatbot_up 1',
+        '# HELP chatbot_faq_ready Whether FAQ files can be loaded and parsed.',
+        '# TYPE chatbot_faq_ready gauge',
+        `chatbot_faq_ready ${faqStatus.ready ? 1 : 0}`,
+        '# HELP chatbot_faq_entries Number of loaded FAQ entries.',
+        '# TYPE chatbot_faq_entries gauge',
+        `chatbot_faq_entries ${faqStatus.entries}`,
+        '# HELP chatbot_webhook_requests_total Number of webhook requests received.',
+        '# TYPE chatbot_webhook_requests_total counter',
+        `chatbot_webhook_requests_total ${webhookRequestCount}`,
+        '# HELP chatbot_webhook_responses_total Webhook responses by result.',
+        '# TYPE chatbot_webhook_responses_total counter',
+        ...Object.entries(webhookResults).map(([result, count]) =>
+            `chatbot_webhook_responses_total{result="${result}"} ${count}`),
+        '# HELP chatbot_last_webhook_timestamp_seconds Unix timestamp of the last webhook request.',
+        '# TYPE chatbot_last_webhook_timestamp_seconds gauge',
+        `chatbot_last_webhook_timestamp_seconds ${lastWebhookTimestamp}`,
+        '# HELP process_uptime_seconds Process uptime in seconds.',
+        '# TYPE process_uptime_seconds gauge',
+        `process_uptime_seconds ${((Date.now() - startedAt) / 1000).toFixed(3)}`
+    ];
+
+    res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    return res.send(`${metrics.join('\n')}\n`);
+});
 
 function updateFaqExamples(contents, entries) {
     const examplesByQuestion = new Map();
@@ -468,22 +533,29 @@ function findAnswer(message, entries) {
 }
 
 app.post('/webhook', (req, res) => {
+    webhookRequestCount += 1;
+    lastWebhookTimestamp = Math.floor(Date.now() / 1000);
+
     if (req.body.event !== 'send') {
+        webhookResults.ignored += 1;
         return res.sendStatus(200);
     }
 
     const message = extractMessage(req.body);
     if (!message) {
+        webhookResults.ignored += 1;
         return res.sendStatus(200);
     }
 
     try {
         const answer = findAnswer(message, loadFaq());
+        webhookResults[answer === FALLBACK_ANSWER ? 'fallback' : 'answered'] += 1;
         return res.status(200).json({
             event: 'send',
             textContent: { text: answer }
         });
     } catch (error) {
+        webhookResults.error += 1;
         console.error('답변을 처리하지 못했습니다:', error.message);
         return res.sendStatus(500);
     }

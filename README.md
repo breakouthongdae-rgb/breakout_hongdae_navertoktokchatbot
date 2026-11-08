@@ -1,5 +1,14 @@
 # 네이버 톡톡 FAQ 챗봇
 
+## 서버 상태 확인
+
+Render에 배포한 뒤 다음 주소를 브라우저에서 열어 서버와 FAQ 상태를 확인할 수 있습니다.
+
+- `https://<Render 서비스 주소>/health` — FAQ 파일을 읽고 형식을 확인합니다. 정상일 때 HTTP `200`, 문제가 있을 때 `503`과 상태 정보가 표시됩니다. Render의 **Settings → Health Check Path**에도 `/health`를 지정하면 배포 후 상태 확인에 사용할 수 있습니다.
+- `https://<Render 서비스 주소>/metrics` — Prometheus 텍스트 형식의 상태와 웹훅 처리 통계를 제공합니다. Prometheus를 사용하는 경우 이 주소를 scrape 대상으로 등록하세요. 통계는 메모리에 누적되므로 서버가 재시작되면 초기화됩니다.
+
+`chatbot_faq_ready`가 `0`이면 FAQ 파일이 없거나 형식 오류가 있는 상태입니다. `chatbot_webhook_requests_total`은 네이버에서 도착한 웹훅 요청 수이며, `chatbot_webhook_responses_total`은 답변 성공(`answered`), 미등록 안내(`fallback`), 무시(`ignored`), 처리 오류(`error`)로 나뉩니다. `chatbot_last_webhook_timestamp_seconds`가 갱신되지 않는다면 네이버에서 웹훅이 도착하지 않는지 확인하세요.
+
 ## 질문·답변 수정 페이지 설정
 
 관리자 편집 페이지는 `https://<Render 서비스 주소>/admin`에서 사용할 수 있습니다. Render 대시보드의 **Environment**에 다음 환경변수를 등록한 뒤 서비스를 재배포하세요.
