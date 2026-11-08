@@ -152,6 +152,20 @@ app.get(['/health', '/healthz'], (req, res) => {
     });
 });
 
+app.get('/monitor/api', (req, res) => {
+    const faqStatus = getFaqStatus();
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+        status: faqStatus.ready ? 'ok' : 'degraded',
+        faqReady: faqStatus.ready,
+        faqEntries: faqStatus.entries,
+        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        webhookRequests: webhookRequestCount,
+        webhookResponses: { ...webhookResults },
+        lastWebhookTimestamp
+    });
+});
+
 app.get('/monitor', (req, res) => {
     return res.sendFile(MONITOR_FILE);
 });

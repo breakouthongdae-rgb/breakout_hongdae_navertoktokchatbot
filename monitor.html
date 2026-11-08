@@ -144,7 +144,7 @@
             <div>
                 <div class="eyebrow">LIVE SERVICE OVERVIEW</div>
                 <h1 id="title">챗봇 모니터링</h1>
-                <p class="intro">네이버 톡톡 연결 상태와 FAQ 응답 통계를 한눈에 확인하세요. 상태와 지표를 20초마다 자동으로 새로고침합니다.</p>
+                <p class="intro">네이버 톡톡 연결 상태와 FAQ 응답 통계를 한눈에 확인하세요. 이 탭이 보일 때 1시간마다 자동으로 새로고침합니다.</p>
             </div>
             <div class="connection" id="connection" data-state="loading" role="status" aria-live="polite">
                 <span class="connection-dot" aria-hidden="true"></span>
@@ -179,7 +179,7 @@
             <article class="card panel">
                 <div class="panel-head">
                     <div><h2>요청 트래픽</h2><p class="subhead">대시보드를 연 뒤부터 수집한 요청 추이</p></div>
-                    <span class="live-tag">LIVE · 20초 간격</span>
+                    <span class="live-tag">LIVE · 1시간 간격</span>
                 </div>
                 <div id="chart-container"><div class="chart-empty">첫 상태 확인 후 요청 추이를 표시합니다.</div></div>
             </article>
@@ -217,7 +217,7 @@
             <article class="card info-card">
                 <div class="info-title">마지막 데이터 갱신</div>
                 <div class="info-value" id="updated-at">—</div>
-                <div class="info-note" id="update-detail">자동으로 20초마다 갱신됩니다.</div>
+                <div class="info-note" id="update-detail">탭이 보일 때 1시간마다 자동 갱신됩니다.</div>
             </article>
         </section>
 
@@ -227,22 +227,13 @@
         </footer>
     </main>
     <script>
-        const POLL_INTERVAL = 20000;
+        const POLL_INTERVAL = 3600000;
         const MAX_SAMPLES = 36;
         const samples = [];
         let previousRequests = null;
         let previousSampleTime = null;
         let polling = false;
-
-        function metricValue(metrics, name, label) {
-            const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const escapedLabel = label ? label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
-            const pattern = label
-                ? new RegExp(`^${escapedName}\\{[^}]*result="${escapedLabel}"[^}]*\\}\\s+([\\d.eE+-]+)$`, 'm')
-                : new RegExp(`^${escapedName}\\s+([\\d.eE+-]+)$`, 'm');
-            const match = metrics.match(pattern);
-            return match ? Number(match[1]) : 0;
-        }
+        let refreshTimer = null;
 
         function formatNumber(value) {
             return Math.round(value).toLocaleString('ko-KR');
@@ -326,21 +317,15 @@
             button.disabled = true;
 
             try {
-                const [healthResponse, metricsResponse] = await Promise.all([
-                    fetch('/health', { cache: 'no-store' }),
-                    fetch('/metrics', { cache: 'no-store' })
-                ]);
-                if (!metricsResponse.ok) throw new Error(`메트릭 요청 실패 (HTTP ${metricsResponse.status})`);
-                const [health, metrics] = await Promise.all([healthResponse.json(), metricsResponse.text()]);
+                const response = await fetch('/monitor/api', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`상태 요청 실패 (HTTP ${response.status})`);
+                const snapshot = await response.json();
                 const now = Math.floor(Date.now() / 1000);
-                const faqReady = metricValue(metrics, 'chatbot_faq_ready') === 1;
-                const requests = metricValue(metrics, 'chatbot_webhook_requests_total');
-                const uptime = metricValue(metrics, 'process_uptime_seconds');
-                const answered = metricValue(metrics, 'chatbot_webhook_responses_total', 'answered');
-                const fallback = metricValue(metrics, 'chatbot_webhook_responses_total', 'fallback');
-                const ignored = metricValue(metrics, 'chatbot_webhook_responses_total', 'ignored');
-                const error = metricValue(metrics, 'chatbot_webhook_responses_total', 'error');
-                const lastWebhook = metricValue(metrics, 'chatbot_last_webhook_timestamp_seconds');
+                const faqReady = snapshot.faqReady;
+                const requests = snapshot.webhookRequests;
+                const uptime = snapshot.uptimeSeconds;
+                const { answered, fallback, ignored, error } = snapshot.webhookResponses;
+                const lastWebhook = snapshot.lastWebhookTimestamp;
                 const currentTime = Date.now();
                 let delta = 0;
 
@@ -356,21 +341,21 @@
                 if (samples.length > MAX_SAMPLES) samples.shift();
 
                 document.querySelector('#uptime').textContent = formatDuration(uptime);
-                document.querySelector('#faq-count').textContent = formatNumber(metricValue(metrics, 'chatbot_faq_entries'));
+                document.querySelector('#faq-count').textContent = formatNumber(snapshot.faqEntries);
                 document.querySelector('#request-count').textContent = formatNumber(requests);
                 document.querySelector('#last-request').textContent = formatLastRequest(lastWebhook, now);
                 document.querySelector('#faq-status').textContent = faqReady ? '정상 · 응답 준비 완료' : '오류 · FAQ 확인 필요';
                 document.querySelector('#faq-status').style.color = faqReady ? 'var(--green)' : 'var(--red)';
                 document.querySelector('#faq-detail').textContent = faqReady
-                    ? `${health.faqEntries || metricValue(metrics, 'chatbot_faq_entries')}개의 FAQ 질문·답변을 읽었습니다.`
+                    ? `${snapshot.faqEntries}개의 FAQ 질문·답변을 읽었습니다.`
                     : 'FAQ 파일을 읽거나 형식을 확인하지 못했습니다. Render 로그를 확인하세요.';
                 document.querySelector('#updated-at').textContent = new Date(currentTime).toLocaleTimeString('ko-KR');
-                document.querySelector('#update-detail').textContent = '다음 자동 확인까지 약 20초';
+                document.querySelector('#update-detail').textContent = '다음 자동 확인까지 약 1시간';
 
                 updateResponses({ answered, fallback, ignored, error });
                 renderChart();
 
-                const healthy = healthResponse.ok && faqReady;
+                const healthy = snapshot.status === 'ok' && faqReady;
                 setConnection(healthy ? 'ok' : 'error', healthy ? '모든 시스템 정상' : '확인이 필요합니다',
                     healthy ? '서버와 FAQ 모두 응답 가능' : '서버 또는 FAQ 상태에 문제가 있습니다');
             } catch (error) {
@@ -386,8 +371,20 @@
         }
 
         document.querySelector('#refresh').addEventListener('click', refresh);
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                window.clearInterval(refreshTimer);
+                refreshTimer = null;
+                return;
+            }
+
+            if (refreshTimer === null) {
+                refresh();
+                refreshTimer = window.setInterval(refresh, POLL_INTERVAL);
+            }
+        });
         refresh();
-        window.setInterval(refresh, POLL_INTERVAL);
+        refreshTimer = window.setInterval(refresh, POLL_INTERVAL);
     </script>
 </body>
 </html>
