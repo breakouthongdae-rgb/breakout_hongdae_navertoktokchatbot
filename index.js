@@ -9,7 +9,9 @@ const FAQ_FILE = path.join(__dirname, 'talk.txt');
 const FAQ_EXAMPLES_FILE = path.join(__dirname, 'faq_examples.txt');
 const ADMIN_FILE = path.join(__dirname, 'admin.html');
 const MONITOR_FILE = path.join(__dirname, 'monitor.html');
+const MONITOR_EVENTS_FILE = path.join(__dirname, 'monitor-events.html');
 const FALLBACK_ANSWER = '죄송해요. 등록된 답변에서 내용을 찾지 못했어요. 상담원에게 문의해 주세요.';
+const MAX_RECENT_WEBHOOK_ISSUES = 100;
 const startedAt = Date.now();
 const webhookResults = {
     answered: 0,
@@ -20,6 +22,19 @@ const webhookResults = {
 let webhookRequestCount = 0;
 let lastWebhookTimestamp = 0;
 let lastFaqError = '';
+const recentWebhookIssues = [];
+
+function recordWebhookIssue(result, question, reason) {
+    recentWebhookIssues.unshift({
+        timestamp: new Date().toISOString(),
+        result,
+        question: question.slice(0, 500),
+        reason
+    });
+    if (recentWebhookIssues.length > MAX_RECENT_WEBHOOK_ISSUES) {
+        recentWebhookIssues.length = MAX_RECENT_WEBHOOK_ISSUES;
+    }
+}
 
 function normalizeText(text) {
     return text.toLocaleLowerCase('ko-KR').replace(/\s+/g, ' ').trim();
@@ -166,6 +181,23 @@ app.get('/monitor/api', (req, res) => {
     });
 });
 
+app.get('/monitor/events', requireMonitorAdmin, (req, res) => {
+    return res.sendFile(MONITOR_EVENTS_FILE);
+});
+
+app.get('/monitor/events/api', requireMonitorAdmin, (req, res) => {
+    const result = req.query.result;
+    if (!['fallback', 'ignored', 'error'].includes(result)) {
+        return res.status(400).json({ error: '올바른 기록 종류를 지정해 주세요.' });
+    }
+
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+        result,
+        events: recentWebhookIssues.filter((event) => event.result === result)
+    });
+});
+
 app.get('/monitor', (req, res) => {
     return res.sendFile(MONITOR_FILE);
 });
@@ -285,6 +317,34 @@ function requireAdmin(req, res, next) {
     }
 
     res.set('WWW-Authenticate', 'Basic realm="FAQ Admin", charset="UTF-8"');
+    return res.sendStatus(401);
+}
+
+function requireMonitorAdmin(req, res, next) {
+    const user = process.env.ADMIN_USER;
+    const password = process.env.ADMIN_PASSWORD;
+    if (!user || !password) {
+        return res.status(503).send('질문 기록을 보려면 Render에 ADMIN_USER와 ADMIN_PASSWORD를 설정해 주세요.');
+    }
+
+    const authorization = req.get('authorization') || '';
+    const encodedCredentials = authorization.match(/^Basic\s+(.+)$/i);
+    if (encodedCredentials) {
+        try {
+            const decoded = Buffer.from(encodedCredentials[1], 'base64').toString('utf8');
+            const separatorIndex = decoded.indexOf(':');
+            if (separatorIndex !== -1 &&
+                safeEqual(decoded.slice(0, separatorIndex), user) &&
+                safeEqual(decoded.slice(separatorIndex + 1), password)) {
+                res.set('Cache-Control', 'no-store');
+                return next();
+            }
+        } catch (error) {
+            console.error('질문 기록 접근 인증에 실패했습니다:', error.message);
+        }
+    }
+
+    res.set('WWW-Authenticate', 'Basic realm="Webhook Question History", charset="UTF-8"');
     return res.sendStatus(401);
 }
 
@@ -554,27 +614,35 @@ function findAnswer(message, entries) {
 app.post('/webhook', (req, res) => {
     webhookRequestCount += 1;
     lastWebhookTimestamp = Math.floor(Date.now() / 1000);
+    const message = extractMessage(req.body);
 
     if (req.body.event !== 'send') {
         webhookResults.ignored += 1;
+        recordWebhookIssue('ignored', message, 'send 이벤트가 아닙니다.');
         return res.sendStatus(200);
     }
 
-    const message = extractMessage(req.body);
     if (!message) {
         webhookResults.ignored += 1;
+        recordWebhookIssue('ignored', '', '질문 문장을 추출할 수 없습니다.');
         return res.sendStatus(200);
     }
 
     try {
         const answer = findAnswer(message, loadFaq());
-        webhookResults[answer === FALLBACK_ANSWER ? 'fallback' : 'answered'] += 1;
+        if (answer === FALLBACK_ANSWER) {
+            webhookResults.fallback += 1;
+            recordWebhookIssue('fallback', message, '일치하는 FAQ 답변을 찾지 못했습니다.');
+        } else {
+            webhookResults.answered += 1;
+        }
         return res.status(200).json({
             event: 'send',
             textContent: { text: answer }
         });
     } catch (error) {
         webhookResults.error += 1;
+        recordWebhookIssue('error', message, error.message);
         console.error('답변을 처리하지 못했습니다:', error.message);
         return res.sendStatus(500);
     }

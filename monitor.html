@@ -89,6 +89,9 @@
         .response-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 9px; font-size: .82rem; }
         .response-name { display: flex; align-items: center; gap: 8px; color: #c7d1e2; }
         .response-value { color: #f0f4fc; font-weight: 700; font-variant-numeric: tabular-nums; }
+        button.response-value { padding: 0; border: 0; color: var(--cyan); background: transparent; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+        button.response-value:hover { color: white; }
+        button.response-value:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; border-radius: 2px; }
         .response-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--series-color); }
         .track { height: 7px; overflow: hidden; border-radius: 8px; background: #202a3c; }
         .fill { width: 0; height: 100%; border-radius: inherit; background: var(--series-color); box-shadow: 0 0 13px color-mix(in srgb, var(--series-color) 45%, transparent); transition: width .45s ease; }
@@ -185,7 +188,7 @@
             </article>
             <article class="card panel">
                 <div class="panel-head">
-                    <div><h2>응답 결과</h2><p class="subhead">현재 인스턴스에서 처리한 톡톡 메시지</p></div>
+                    <div><h2>응답 결과</h2><p class="subhead">실패 건수를 누르면 관리자 인증 후 질문 기록을 볼 수 있습니다.</p></div>
                 </div>
                 <div class="response-list">
                     <div>
@@ -193,15 +196,15 @@
                         <div class="track"><div class="fill" id="answered-bar" style="--series-color:#67e8b1"></div></div>
                     </div>
                     <div>
-                        <div class="response-head"><span class="response-name"><i class="response-dot" style="--series-color:#ffc879"></i>미등록 안내</span><strong class="response-value" id="fallback">0</strong></div>
+                        <div class="response-head"><span class="response-name"><i class="response-dot" style="--series-color:#ffc879"></i>미등록 안내</span><button class="response-value" id="fallback" type="button" data-result="fallback" aria-label="미등록 안내 질문 기록 보기">0</button></div>
                         <div class="track"><div class="fill" id="fallback-bar" style="--series-color:#ffc879"></div></div>
                     </div>
                     <div>
-                        <div class="response-head"><span class="response-name"><i class="response-dot" style="--series-color:#a894ff"></i>무시된 이벤트</span><strong class="response-value" id="ignored">0</strong></div>
+                        <div class="response-head"><span class="response-name"><i class="response-dot" style="--series-color:#a894ff"></i>무시된 이벤트</span><button class="response-value" id="ignored" type="button" data-result="ignored" aria-label="무시된 이벤트 질문 기록 보기">0</button></div>
                         <div class="track"><div class="fill" id="ignored-bar" style="--series-color:#a894ff"></div></div>
                     </div>
                     <div>
-                        <div class="response-head"><span class="response-name"><i class="response-dot" style="--series-color:#ff8291"></i>처리 오류</span><strong class="response-value" id="errors">0</strong></div>
+                        <div class="response-head"><span class="response-name"><i class="response-dot" style="--series-color:#ff8291"></i>처리 오류</span><button class="response-value" id="errors" type="button" data-result="error" aria-label="처리 오류 질문 기록 보기">0</button></div>
                         <div class="track"><div class="fill" id="error-bar" style="--series-color:#ff8291"></div></div>
                     </div>
                 </div>
@@ -371,6 +374,11 @@
         }
 
         document.querySelector('#refresh').addEventListener('click', refresh);
+        document.querySelectorAll('.response-value[data-result]').forEach((button) => {
+            button.addEventListener('click', () => {
+                window.location.href = `/monitor/events?result=${encodeURIComponent(button.dataset.result)}`;
+            });
+        });
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 window.clearInterval(refreshTimer);
