@@ -44,6 +44,162 @@ function compactText(text) {
     return normalizeText(text).replace(/[^\p{L}\p{N}]/gu, '');
 }
 
+function getEditDistance(first, second) {
+    const firstCharacters = Array.from(first);
+    const secondCharacters = Array.from(second);
+    let previousRow = Array.from({ length: secondCharacters.length + 1 }, (_, index) => index);
+
+    for (let firstIndex = 1; firstIndex <= firstCharacters.length; firstIndex += 1) {
+        const currentRow = [firstIndex];
+        for (let secondIndex = 1; secondIndex <= secondCharacters.length; secondIndex += 1) {
+            const substitutionCost = firstCharacters[firstIndex - 1] === secondCharacters[secondIndex - 1] ? 0 : 1;
+            currentRow[secondIndex] = Math.min(
+                previousRow[secondIndex] + 1,
+                currentRow[secondIndex - 1] + 1,
+                previousRow[secondIndex - 1] + substitutionCost
+            );
+        }
+        previousRow = currentRow;
+    }
+
+    return previousRow[secondCharacters.length];
+}
+
+function findFuzzyExampleAnswer(message, entries) {
+    const compactMessage = compactText(message);
+    if (compactMessage.length < 8 || compactMessage.length > 120) {
+        return null;
+    }
+
+    const messageNumbers = (compactMessage.match(/\d+/g) || []).join(',');
+    const matches = [];
+    for (const entry of entries) {
+        for (const example of entry.examples || []) {
+            const compactExample = compactText(example);
+            if (compactExample.length < 8 ||
+                (compactExample.match(/\d+/g) || []).join(',') !== messageNumbers) {
+                continue;
+            }
+
+            const maxDistance = Math.min(2, Math.max(1, Math.floor(compactExample.length * 0.12)));
+            if (Math.abs(compactMessage.length - compactExample.length) > maxDistance) {
+                continue;
+            }
+
+            const distance = getEditDistance(compactMessage, compactExample);
+            if (distance <= maxDistance) {
+                matches.push({ entry, distance });
+            }
+        }
+    }
+
+    if (matches.length === 0) {
+        return null;
+    }
+
+    const bestDistance = Math.min(...matches.map((match) => match.distance));
+    const bestEntries = new Set(matches
+        .filter((match) => match.distance === bestDistance)
+        .map((match) => match.entry));
+    return bestEntries.size === 1
+        ? [...bestEntries][0].answer
+        : null;
+}
+
+const CORE_QUESTION_STOPWORDS = new Set([
+    '것', '거', '수', '때', '정도', '정도는', '같', '조금', '혹시', '그냥',
+    '어떻게', '어떤', '무엇', '뭐', '하나', '방법', '문의', '질문', '답변',
+    '알려', '부탁', '가능', '가능성', '있', '없', '하', '되', '해',
+    '인가', '인가요', '나요', '네요', '까요', '인가요',
+    '은', '는', '이', '가', '을', '를', '에', '로', '와', '과', '도', '만', '의',
+    '하고', '해서', '하며', '그리고', '또는', '저희', '제가', '저는'
+]);
+const CORE_QUESTION_ENDINGS = [
+    '을것같습니다', '을것같아요', '을것같은데요', '을것', '는다는', 'ㄴ다는',
+    '습니다', '습니까', '입니다', '할까요', '인가요', '은데요', '는데요',
+    'ㄴ데요', '을까요', '을게요', 'ㄹ게요', '했어요', '해요', '돼요',
+    '어요', '아요', '예요', '에요', '네요', '군요', '세요', '합니다',
+    '하는', '하면', '해서', '하고', '하며', '되어', '되면', '되나요',
+    '인가', '이나', '라도', '부터', '까지', '에게', '한테', '으로',
+    '에서', '보다', '처럼', '정도', '으로', '은요', '는요', '을', '를',
+    '은', '는', '이', '가', '에', '로', '와', '과', '도', '만', '의',
+    '전', '후', '쯤', '요', '다'
+].sort((first, second) => second.length - first.length);
+
+function getCoreQuestionKeywords(text) {
+    const tokens = text.toLocaleLowerCase('ko-KR').match(/\d[\d,]*|[\p{L}]+/gu) || [];
+    return new Set(tokens.map((token) => {
+        if (/^\d[\d,]*$/.test(token)) {
+            return token.replace(/,/g, '');
+        }
+
+        let keyword = token;
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const ending of CORE_QUESTION_ENDINGS) {
+                if (keyword.length - ending.length >= 1 && keyword.endsWith(ending)) {
+                    keyword = keyword.slice(0, -ending.length);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        return keyword;
+    }).filter((keyword) =>
+        keyword.length >= 1 && !CORE_QUESTION_STOPWORDS.has(keyword)));
+}
+
+function getQuestionNumbers(text) {
+    return (text.match(/\d[\d,]*/g) || []).map((number) => number.replace(/,/g, ''));
+}
+
+function findCoreKeywordAnswer(message, entries) {
+    const messageKeywords = getCoreQuestionKeywords(message);
+    if (messageKeywords.size < 2) {
+        return null;
+    }
+
+    const messageNumbers = getQuestionNumbers(message);
+    const candidates = entries.map((entry) => {
+        let bestScore = 0;
+        let bestOverlap = 0;
+
+        for (const phrase of [entry.title, ...(entry.examples || [])]) {
+            const phraseNumbers = getQuestionNumbers(phrase);
+            if (messageNumbers.length > 0 && phraseNumbers.length > 0 &&
+                messageNumbers.join(',') !== phraseNumbers.join(',')) {
+                continue;
+            }
+
+            const phraseKeywords = getCoreQuestionKeywords(phrase);
+            let overlap = 0;
+            for (const keyword of messageKeywords) {
+                if (phraseKeywords.has(keyword)) {
+                    overlap += 1;
+                }
+            }
+
+            const score = phraseKeywords.size === 0
+                ? 0
+                : (2 * overlap) / (messageKeywords.size + phraseKeywords.size);
+            if (score > bestScore) {
+                bestScore = score;
+                bestOverlap = overlap;
+            }
+        }
+
+        return { entry, score: bestScore, overlap: bestOverlap };
+    }).sort((first, second) => second.score - first.score);
+
+    const bestMatch = candidates[0];
+    const nextMatch = candidates[1];
+    return bestMatch && bestMatch.overlap >= 2 && bestMatch.score >= 0.62 &&
+        (!nextMatch || bestMatch.score - nextMatch.score >= 0.12)
+        ? bestMatch.entry.answer
+        : null;
+}
+
 function parseFaq(contents) {
     const entries = [];
     const questions = new Set();
@@ -520,6 +676,11 @@ function findAnswer(message, entries) {
         return exactExampleMatches[0].answer;
     }
 
+    const coreKeywordAnswer = findCoreKeywordAnswer(message, entries);
+    if (coreKeywordAnswer) {
+        return coreKeywordAnswer;
+    }
+
     const partialMatches = entries.map((entry) => {
         const phrase = [entry.question, ...(entry.examples || [])]
             .filter((candidate) => {
@@ -536,6 +697,11 @@ function findAnswer(message, entries) {
         (partialMatches.length === 1 ||
             compactText(partialMatches[0].phrase).length > compactText(partialMatches[1].phrase).length)) {
         return partialMatches[0].entry.answer;
+    }
+
+    const fuzzyExampleAnswer = findFuzzyExampleAnswer(message, entries);
+    if (fuzzyExampleAnswer) {
+        return fuzzyExampleAnswer;
     }
 
     const ignoredWords = new Set([
