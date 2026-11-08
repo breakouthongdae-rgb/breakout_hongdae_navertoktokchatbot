@@ -72,8 +72,10 @@ function findFuzzyExampleAnswer(message, entries) {
     }
 
     const messageNumbers = (compactMessage.match(/\d+/g) || []).join(',');
+    const messageCoreKeywords = getCoreQuestionKeywords(message);
     const matches = [];
     for (const entry of entries) {
+        let bestEntryMatch = null;
         for (const example of entry.examples || []) {
             const compactExample = compactText(example);
             if (compactExample.length < 8 ||
@@ -81,15 +83,25 @@ function findFuzzyExampleAnswer(message, entries) {
                 continue;
             }
 
-            const maxDistance = Math.min(2, Math.max(1, Math.floor(compactExample.length * 0.12)));
+            const maxDistance = Math.min(3, Math.max(1, Math.ceil(compactExample.length * 0.15)));
             if (Math.abs(compactMessage.length - compactExample.length) > maxDistance) {
                 continue;
             }
 
             const distance = getEditDistance(compactMessage, compactExample);
-            if (distance <= maxDistance) {
-                matches.push({ entry, distance });
+            if (distance <= maxDistance &&
+                (!bestEntryMatch || distance < bestEntryMatch.distance)) {
+                bestEntryMatch = {
+                    entry,
+                    distance,
+                    coreOverlap: [...messageCoreKeywords]
+                        .filter((keyword) => getCoreQuestionKeywords(example).has(keyword)).length
+                };
             }
+        }
+
+        if (bestEntryMatch) {
+            matches.push(bestEntryMatch);
         }
     }
 
@@ -97,13 +109,19 @@ function findFuzzyExampleAnswer(message, entries) {
         return null;
     }
 
-    const bestDistance = Math.min(...matches.map((match) => match.distance));
-    const bestEntries = new Set(matches
-        .filter((match) => match.distance === bestDistance)
-        .map((match) => match.entry));
-    return bestEntries.size === 1
-        ? [...bestEntries][0].answer
-        : null;
+    matches.sort((first, second) => first.distance - second.distance);
+    const bestMatch = matches[0];
+    const closeCompetitors = matches.filter((match) =>
+        match.entry !== bestMatch.entry && match.distance === bestMatch.distance);
+    if (closeCompetitors.length > 0) {
+        const bestCoreOverlap = bestMatch.coreOverlap;
+        const competitorCoreOverlap = Math.max(...closeCompetitors.map((match) => match.coreOverlap));
+        if (bestCoreOverlap < 2 || bestCoreOverlap <= competitorCoreOverlap) {
+            return null;
+        }
+    }
+
+    return bestMatch.entry.answer;
 }
 
 const CORE_QUESTION_STOPWORDS = new Set([
