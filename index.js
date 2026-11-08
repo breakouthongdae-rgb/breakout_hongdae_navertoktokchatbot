@@ -8,6 +8,7 @@ app.use(express.json());
 const FAQ_FILE = path.join(__dirname, 'talk.txt');
 const FAQ_EXAMPLES_FILE = path.join(__dirname, 'faq_examples.txt');
 const ADMIN_FILE = path.join(__dirname, 'admin.html');
+const MONITOR_FILE = path.join(__dirname, 'monitor.html');
 const FALLBACK_ANSWER = '죄송해요. 등록된 답변에서 내용을 찾지 못했어요. 상담원에게 문의해 주세요.';
 const startedAt = Date.now();
 const webhookResults = {
@@ -149,6 +150,10 @@ app.get(['/health', '/healthz'], (req, res) => {
         faqEntries: faqStatus.entries,
         uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000)
     });
+});
+
+app.get('/monitor', (req, res) => {
+    return res.sendFile(MONITOR_FILE);
 });
 
 app.get('/metrics', (req, res) => {

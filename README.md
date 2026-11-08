@@ -4,6 +4,7 @@
 
 Render에 배포한 뒤 다음 주소를 브라우저에서 열어 서버와 FAQ 상태를 확인할 수 있습니다.
 
+- `https://<Render 서비스 주소>/monitor` — 서버 상태와 FAQ 수, 톡톡 요청·응답 통계를 카드와 그래프로 보여주는 실시간 대시보드입니다. 그래프는 페이지를 열어 둔 동안 요청 추이를 수집합니다.
 - `https://<Render 서비스 주소>/health` — FAQ 파일을 읽고 형식을 확인합니다. 정상일 때 HTTP `200`, 문제가 있을 때 `503`과 상태 정보가 표시됩니다. Render의 **Settings → Health Check Path**에도 `/health`를 지정하면 배포 후 상태 확인에 사용할 수 있습니다.
 - `https://<Render 서비스 주소>/metrics` — Prometheus 텍스트 형식의 상태와 웹훅 처리 통계를 제공합니다. Prometheus를 사용하는 경우 이 주소를 scrape 대상으로 등록하세요. 통계는 메모리에 누적되므로 서버가 재시작되면 초기화됩니다.
 
